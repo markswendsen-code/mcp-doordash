@@ -1,5 +1,9 @@
 # @striderlabs/mcp-doordash
 
+[![npm](https://img.shields.io/npm/v/@striderlabs/mcp-doordash)](https://www.npmjs.com/package/@striderlabs/mcp-doordash)
+[![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
 MCP server for DoorDash - let AI agents order food delivery.
 
 Built by [Strider Labs](https://striderlabs.ai).
@@ -164,7 +168,7 @@ This connector uses Playwright for browser automation:
 ## Development
 
 ```bash
-git clone https://github.com/striderlabs/mcp-doordash.git
+git clone https://github.com/markswendsen-code/mcp-doordash.git
 cd mcp-doordash
 npm install
 npm run build
