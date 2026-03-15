@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { BrowserContext, Cookie } from "playwright";
+import type { BrowserContext, Cookie } from "patchright";
 
 // Default cookie storage location
 const CONFIG_DIR = join(homedir(), ".config", "striderlabs-mcp-doordash");

@@ -1,14 +1,14 @@
 /**
  * DoorDash Browser Automation
  * 
- * Playwright-based automation for DoorDash operations.
+ * Patchright-based stealth automation for DoorDash operations.
  */
 
-import { chromium, Browser, BrowserContext, Page } from "playwright";
+import { chromium, Browser, BrowserContext, Page } from "patchright";
 import { saveCookies, loadCookies, getAuthState, AuthState } from "./auth.js";
 
 const DOORDASH_BASE_URL = "https://www.doordash.com";
-const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_TIMEOUT = 60000;
 
 // Singleton browser instance
 let browser: Browser | null = null;
@@ -72,14 +72,17 @@ async function initBrowser(): Promise<void> {
       "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
       "--disable-setuid-sandbox",
+      "--disable-web-security",
+      "--disable-features=IsolateOrigins,site-per-process",
     ],
   });
 
   context = await browser.newContext({
     userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     viewport: { width: 1280, height: 800 },
     locale: "en-US",
+    timezoneId: "America/Los_Angeles",
   });
 
   // Load saved cookies
@@ -87,10 +90,8 @@ async function initBrowser(): Promise<void> {
 
   page = await context.newPage();
   
-  // Block unnecessary resources for speed
-  await page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2}", (route) =>
-    route.abort()
-  );
+  // Set default timeout
+  page.setDefaultTimeout(DEFAULT_TIMEOUT);
 }
 
 /**
@@ -121,8 +122,8 @@ export async function checkAuth(): Promise<AuthState> {
   // Navigate to DoorDash to check auth state
   await p.goto(DOORDASH_BASE_URL, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT });
   
-  // Wait a bit for any auth redirects
-  await p.waitForTimeout(2000);
+  // Wait for page to stabilize
+  await p.waitForTimeout(3000);
   
   const authState = await getAuthState(ctx);
   
@@ -141,31 +142,48 @@ export async function setAddress(address: string): Promise<{ success: boolean; f
   
   try {
     await p.goto(DOORDASH_BASE_URL, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT });
+    await p.waitForTimeout(2000);
     
-    // Click on address input/button
-    const addressButton = p.locator('[data-anchor-id="AddressModalButton"], [data-testid="AddressModalButton"], button:has-text("Enter delivery address")');
-    
-    if (await addressButton.isVisible({ timeout: 5000 })) {
-      await addressButton.click();
-      await p.waitForTimeout(1000);
+    // Close any sign-in dialog that pops up
+    const closeButton = p.locator('button:has-text("Close")').first();
+    if (await closeButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await closeButton.click();
+      await p.waitForTimeout(500);
     }
     
-    // Find and fill address input
-    const addressInput = p.locator('input[placeholder*="address"], input[placeholder*="Address"], input[data-testid="AddressAutocompleteInput"]');
-    await addressInput.waitFor({ timeout: 5000 });
-    await addressInput.fill(address);
-    await p.waitForTimeout(1500);
+    // Look for the address input combobox on homepage
+    const addressCombobox = p.locator('input[placeholder*="delivery address"], input[placeholder*="Enter delivery"], [role="combobox"][aria-label*="address"]').first();
     
-    // Click first suggestion
-    const suggestion = p.locator('[data-testid="AddressAutocompleteSuggestion"], [role="option"]').first();
-    if (await suggestion.isVisible({ timeout: 3000 })) {
+    // Or the "Your Address" button on search pages
+    const addressButton = p.locator('button:has-text("Your Address"), button:has-text("Enter delivery address")').first();
+    
+    if (await addressCombobox.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await addressCombobox.click();
+      await addressCombobox.fill(address);
+      await p.waitForTimeout(1500);
+    } else if (await addressButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await addressButton.click();
+      await p.waitForTimeout(1000);
+      
+      // Find the address input in the modal/dropdown
+      const modalInput = p.locator('input[placeholder*="address"], input[placeholder*="Address"]').first();
+      await modalInput.waitFor({ timeout: 5000 });
+      await modalInput.fill(address);
+      await p.waitForTimeout(1500);
+    } else {
+      throw new Error("Could not find address input field");
+    }
+    
+    // Click first suggestion from autocomplete
+    const suggestion = p.locator('[role="option"], [role="listbox"] >> text=' + address.split(',')[0]).first();
+    if (await suggestion.isVisible({ timeout: 3000 }).catch(() => false)) {
       await suggestion.click();
       await p.waitForTimeout(1000);
     }
     
-    // Confirm address if there's a save button
-    const saveButton = p.locator('button:has-text("Save"), button:has-text("Done"), button:has-text("Confirm")');
-    if (await saveButton.isVisible({ timeout: 2000 })) {
+    // Try clicking save/confirm button if present
+    const saveButton = p.locator('button:has-text("Save"), button:has-text("Done"), button:has-text("Confirm"), button:has-text("Find Restaurants")').first();
+    if (await saveButton.isVisible({ timeout: 2000 }).catch(() => false)) {
       await saveButton.click();
     }
     
@@ -202,41 +220,120 @@ export async function searchRestaurants(
     }
     
     await p.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT });
-    await p.waitForTimeout(3000);
-    
-    // Wait for restaurant cards to load
-    const restaurantCards = p.locator('[data-testid="StoreCard"], [data-anchor-id="StoreCard"], article[role="article"]');
-    await restaurantCards.first().waitFor({ timeout: 10000 }).catch(() => {});
+    await p.waitForTimeout(5000);
     
     const restaurants: Restaurant[] = [];
-    const cardCount = await restaurantCards.count();
     
-    for (let i = 0; i < Math.min(cardCount, 20); i++) {
-      const card = restaurantCards.nth(i);
-      
+    // Find all links that contain /store/ pattern - these are restaurant cards
+    const storeLinks = await p.locator('a[href*="/store/"]').all();
+    
+    // Track seen store IDs to avoid duplicates
+    const seenIds = new Set<string>();
+    
+    for (const link of storeLinks) {
       try {
-        const name = await card.locator('span[data-telemetry-id="store.name"], h3, [data-testid="StoreName"]').first().textContent() || "";
-        const cuisineText = await card.locator('[data-testid="StoreCuisines"], span:has-text("•")').first().textContent().catch(() => "") || "";
-        const ratingText = await card.locator('[data-testid="StoreRating"], span:has-text("★")').first().textContent().catch(() => "0") || "0";
-        const deliveryTimeText = await card.locator('[data-testid="DeliveryTime"], span:has-text("min")').first().textContent().catch(() => "") || "";
-        const feeText = await card.locator('[data-testid="DeliveryFee"], span:has-text("$")').first().textContent().catch(() => "") || "";
+        const href = await link.getAttribute('href');
+        if (!href) continue;
         
-        // Extract store ID from link
-        const link = await card.locator('a[href*="/store/"]').first().getAttribute('href').catch(() => "");
-        const storeIdMatch = link?.match(/\/store\/(\d+)/);
+        // Extract store ID from URL
+        const storeIdMatch = href.match(/\/store\/(\d+)/);
+        if (!storeIdMatch) continue;
         
-        if (name) {
-          restaurants.push({
-            id: storeIdMatch?.[1] || String(i),
-            name: name.trim(),
-            cuisine: cuisineText.split("•").map((c) => c.trim()).filter(Boolean),
-            rating: parseFloat(ratingText.replace(/[^0-9.]/g, "")) || 0,
-            deliveryTime: deliveryTimeText.trim(),
-            deliveryFee: feeText.trim(),
-          });
+        const storeId = storeIdMatch[1];
+        if (seenIds.has(storeId)) continue;
+        
+        // Get the link text which contains restaurant info
+        const linkText = await link.textContent() || "";
+        if (!linkText.trim()) continue;
+        
+        // Skip if text is too short (likely just an image link)
+        if (linkText.length < 10) continue;
+        
+        // Parse the text content to extract restaurant info
+        // Format: "Restaurant Name4.7(3k+)•0.8 mi•29 min$0 delivery fee, first order"
+        // Note: No spaces between name and rating!
+        
+        // Split by bullet points (•)
+        const parts = linkText.split('•').map(s => s.trim());
+        const firstPart = parts[0] || "";
+        
+        // Extract rating pattern like "4.7" followed by parens - no space before rating
+        const ratingMatch = firstPart.match(/(\d+\.\d+)\s*\(([^)]+)\)/);
+        const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 0;
+        
+        // Get restaurant name - everything before the rating number
+        let name = firstPart;
+        if (ratingMatch) {
+          // Find where the rating starts (the digit)
+          const ratingIndex = firstPart.indexOf(ratingMatch[0]);
+          name = firstPart.substring(0, ratingIndex).trim();
+        } else {
+          // No rating found, try to find where numbers start
+          const numIndex = firstPart.search(/\d/);
+          if (numIndex > 0) {
+            name = firstPart.substring(0, numIndex).trim();
+          }
         }
+        
+        // Remove any remaining parenthetical content from name
+        name = name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        
+        // Skip if no valid name
+        if (!name || name.length < 2) continue;
+        
+        // Mark this ID as seen only after we have a valid name
+        seenIds.add(storeId);
+        
+        // Parse distance and delivery time from remaining parts
+        // Format after bullet split: ["Name4.7(3k+)", "0.8 mi", "29 min$0 delivery fee..."]
+        let distance = "";
+        let deliveryTime = "";
+        let deliveryFee = "";
+        
+        for (const part of parts.slice(1)) {
+          // Distance: contains "mi" or "ft" but NOT "min"
+          if ((part.includes(' mi') || part.includes(' ft')) && !part.includes('min')) {
+            distance = part;
+          } 
+          // Time + delivery fee: contains "min"
+          else if (part.includes('min')) {
+            // Extract just the time portion (number + min)
+            const timeMatch = part.match(/(\d+)\s*min/);
+            if (timeMatch) {
+              deliveryTime = timeMatch[0];
+            }
+            // Extract delivery fee from this part
+            const feeMatch = part.match(/\$\d+\.?\d*\s*delivery fee[^$]*|free delivery[^$]*/i);
+            if (feeMatch) {
+              deliveryFee = feeMatch[0].trim();
+            }
+          }
+        }
+        
+        // Fallback: try to extract delivery fee from full text if not found
+        if (!deliveryFee && linkText.includes('delivery fee')) {
+          const feeMatch = linkText.match(/\$\d+\.?\d*\s*delivery fee[^•]*/i);
+          if (feeMatch) {
+            deliveryFee = feeMatch[0].trim();
+          }
+        }
+        
+        restaurants.push({
+          id: storeId,
+          name: name,
+          cuisine: [],
+          rating: rating,
+          deliveryTime: deliveryTime,
+          deliveryFee: deliveryFee,
+          distance: distance,
+        });
+        
+        // Stop after 20 restaurants
+        if (restaurants.length >= 20) break;
+        
       } catch {
-        // Skip problematic cards
+        // Skip problematic elements
+        continue;
       }
     }
     
@@ -268,59 +365,91 @@ export async function getMenu(
       waitUntil: "domcontentloaded",
       timeout: DEFAULT_TIMEOUT,
     });
-    await p.waitForTimeout(3000);
+    await p.waitForTimeout(4000);
     
-    // Get restaurant name
-    const restaurantName = await p.locator('h1, [data-testid="StoreName"]').first().textContent() || "Unknown Restaurant";
+    // Get restaurant name from h1 or page content
+    const restaurantName = await p.locator('h1').first().textContent().catch(() => "") || "Unknown Restaurant";
     
-    // Wait for menu to load
-    await p.locator('[data-testid="MenuItem"], [data-anchor-id="MenuItem"], article').first().waitFor({ timeout: 10000 }).catch(() => {});
+    // Wait for menu items to load
+    await p.waitForTimeout(2000);
     
     const categories: MenuCategory[] = [];
     
-    // Get menu sections
-    const sections = p.locator('section[data-testid="MenuSection"], div[data-anchor-id="MenuCategory"], section:has(h2)');
-    const sectionCount = await sections.count();
+    // Find menu sections - they usually have h2 or h3 headings
+    const sections = await p.locator('section, div:has(> h2), div:has(> h3)').all();
     
-    for (let s = 0; s < sectionCount; s++) {
-      const section = sections.nth(s);
-      const categoryName = await section.locator('h2, h3').first().textContent().catch(() => "") || "Menu";
-      
-      const items: MenuItem[] = [];
-      const menuItems = section.locator('[data-testid="MenuItem"], [data-anchor-id="MenuItem"], article');
-      const itemCount = await menuItems.count();
-      
-      for (let i = 0; i < Math.min(itemCount, 30); i++) {
-        const item = menuItems.nth(i);
+    for (const section of sections) {
+      try {
+        // Get section heading
+        const heading = await section.locator('h2, h3').first().textContent().catch(() => "");
+        if (!heading || heading.length < 2) continue;
         
-        try {
-          const itemName = await item.locator('span[data-testid="ItemName"], h3, [data-anchor-id="ItemName"]').first().textContent() || "";
-          const description = await item.locator('[data-testid="ItemDescription"], p').first().textContent().catch(() => "") || "";
-          const priceText = await item.locator('[data-testid="ItemPrice"], span:has-text("$")').first().textContent().catch(() => "$0") || "$0";
-          const popular = await item.locator('span:has-text("Popular"), [data-testid="PopularBadge"]').isVisible().catch(() => false);
-          
-          // Extract item ID from data attribute or generate one
-          const itemId = await item.getAttribute('data-item-id').catch(() => "") || `item-${s}-${i}`;
-          
-          if (itemName) {
+        const items: MenuItem[] = [];
+        
+        // Find items within this section - look for clickable elements with prices
+        const itemElements = await section.locator('button, [role="button"], article, div:has(span:has-text("$"))').all();
+        
+        for (const item of itemElements) {
+          try {
+            const itemText = await item.textContent() || "";
+            
+            // Must have a price to be a menu item
+            if (!itemText.includes('$')) continue;
+            
+            // Extract item name and price
+            // Format: "Item Name $XX.XX" or "Item Name - $XX.XX description..."
+            const priceMatch = itemText.match(/\$(\d+\.?\d*)/);
+            if (!priceMatch) continue;
+            
+            const price = parseFloat(priceMatch[1]);
+            
+            // Get item name - text before the price
+            let itemName = itemText.substring(0, itemText.indexOf('$')).trim();
+            itemName = itemName.replace(/[-–—]\s*$/, '').trim();
+            
+            // Skip if name is too short or looks like a section
+            if (!itemName || itemName.length < 2 || itemName === heading) continue;
+            
+            // Get description - text after price (if any)
+            let description = "";
+            const afterPrice = itemText.substring(itemText.indexOf(priceMatch[0]) + priceMatch[0].length);
+            if (afterPrice) {
+              description = afterPrice.trim().substring(0, 200);
+            }
+            
+            // Check if popular/liked
+            const popular = itemText.toLowerCase().includes('popular') || 
+                           itemText.toLowerCase().includes('most liked') ||
+                           itemText.includes('%');
+            
             items.push({
-              id: itemId,
-              name: itemName.trim(),
-              description: description.trim(),
-              price: parseFloat(priceText.replace(/[^0-9.]/g, "")) || 0,
-              popular,
+              id: `${restaurantId}-${items.length}`,
+              name: itemName,
+              description: description,
+              price: price,
+              popular: popular,
             });
+            
+            // Limit items per category
+            if (items.length >= 30) break;
+            
+          } catch {
+            continue;
           }
-        } catch {
-          // Skip problematic items
         }
-      }
-      
-      if (items.length > 0) {
-        categories.push({
-          name: categoryName.trim(),
-          items,
-        });
+        
+        if (items.length > 0) {
+          categories.push({
+            name: heading.trim(),
+            items,
+          });
+        }
+        
+        // Limit categories
+        if (categories.length >= 15) break;
+        
+      } catch {
+        continue;
       }
     }
     
@@ -362,17 +491,17 @@ export async function addToCart(
       await p.waitForTimeout(3000);
     }
     
-    // Find and click the menu item
-    const menuItem = p.locator(`[data-testid="MenuItem"]:has-text("${itemName}"), article:has-text("${itemName}")`).first();
-    await menuItem.waitFor({ timeout: 5000 });
+    // Find and click the menu item by name
+    const menuItem = p.locator(`button:has-text("${itemName}"), [role="button"]:has-text("${itemName}")`).first();
+    await menuItem.waitFor({ timeout: 10000 });
     await menuItem.click();
     await p.waitForTimeout(2000);
     
     // Handle quantity if more than 1
     if (quantity > 1) {
       for (let i = 1; i < quantity; i++) {
-        const increaseButton = p.locator('button[aria-label*="increase"], button:has-text("+"), [data-testid="QuantityIncrease"]').first();
-        if (await increaseButton.isVisible({ timeout: 2000 })) {
+        const increaseButton = p.locator('button[aria-label*="increase"], button[aria-label*="Increase"], button:has-text("+")').first();
+        if (await increaseButton.isVisible({ timeout: 2000 }).catch(() => false)) {
           await increaseButton.click();
           await p.waitForTimeout(300);
         }
@@ -381,26 +510,29 @@ export async function addToCart(
     
     // Add special instructions if provided
     if (specialInstructions) {
-      const instructionsInput = p.locator('textarea[placeholder*="instruction"], input[placeholder*="instruction"], [data-testid="SpecialInstructions"]');
-      if (await instructionsInput.isVisible({ timeout: 2000 })) {
+      const instructionsInput = p.locator('textarea[placeholder*="instruction"], textarea[placeholder*="special"], input[placeholder*="instruction"]');
+      if (await instructionsInput.isVisible({ timeout: 2000 }).catch(() => false)) {
         await instructionsInput.fill(specialInstructions);
       }
     }
     
     // Click add to cart button
-    const addButton = p.locator('button:has-text("Add to Cart"), button:has-text("Add to Order"), button[data-testid="AddToCartButton"]').first();
+    const addButton = p.locator('button:has-text("Add to Cart"), button:has-text("Add to Order"), button:has-text("Add")').first();
     await addButton.waitFor({ timeout: 5000 });
     await addButton.click();
     await p.waitForTimeout(2000);
     
-    // Get cart total
-    const cartTotal = await p.locator('[data-testid="CartTotal"], span:has-text("$")').last().textContent().catch(() => "$0") || "$0";
+    // Get cart total from cart icon or button
+    const cartButton = p.locator('button[aria-label*="cart"], button:has-text("Cart")').first();
+    const cartText = await cartButton.textContent().catch(() => "") || "";
+    const totalMatch = cartText.match(/\$(\d+\.?\d*)/);
+    const cartTotal = totalMatch ? parseFloat(totalMatch[1]) : 0;
     
     await saveCookies(ctx);
     
     return {
       success: true,
-      cartTotal: parseFloat(cartTotal.replace(/[^0-9.]/g, "")) || 0,
+      cartTotal: cartTotal,
     };
   } catch (error) {
     return {
@@ -419,42 +551,57 @@ export async function getCart(): Promise<{ success: boolean; items?: CartItem[];
 
   try {
     // Click on cart to open it
-    const cartButton = p.locator('[data-testid="CartButton"], button[aria-label*="cart"], button:has-text("Cart")').first();
-    if (await cartButton.isVisible({ timeout: 3000 })) {
+    const cartButton = p.locator('button[aria-label*="cart"], button[aria-label*="Cart"]').first();
+    if (await cartButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await cartButton.click();
       await p.waitForTimeout(2000);
     }
     
     const items: CartItem[] = [];
-    const cartItems = p.locator('[data-testid="CartItem"], [data-anchor-id="CartItem"]');
-    const itemCount = await cartItems.count();
     
-    for (let i = 0; i < itemCount; i++) {
-      const item = cartItems.nth(i);
-      const name = await item.locator('[data-testid="CartItemName"], span').first().textContent() || "";
-      const quantityText = await item.locator('[data-testid="CartItemQuantity"], span:has-text("x")').textContent().catch(() => "1") || "1";
-      const priceText = await item.locator('[data-testid="CartItemPrice"], span:has-text("$")').textContent().catch(() => "$0") || "$0";
-      
-      if (name) {
-        items.push({
-          name: name.trim(),
-          quantity: parseInt(quantityText.replace(/[^0-9]/g, "")) || 1,
-          price: parseFloat(priceText.replace(/[^0-9.]/g, "")) || 0,
-        });
+    // Find cart items - they usually contain price and quantity info
+    const cartItems = await p.locator('[data-testid*="cart"], [aria-label*="cart"] >> div:has(span:has-text("$"))').all();
+    
+    for (const item of cartItems) {
+      try {
+        const itemText = await item.textContent() || "";
+        if (!itemText.includes('$')) continue;
+        
+        // Extract name and price
+        const priceMatch = itemText.match(/\$(\d+\.?\d*)/);
+        if (!priceMatch) continue;
+        
+        const name = itemText.substring(0, itemText.indexOf('$')).trim();
+        const price = parseFloat(priceMatch[1]);
+        
+        // Try to find quantity
+        const qtyMatch = itemText.match(/(\d+)\s*x/i) || itemText.match(/x\s*(\d+)/i);
+        const quantity = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+        
+        if (name) {
+          items.push({
+            name: name.trim(),
+            quantity,
+            price,
+          });
+        }
+      } catch {
+        continue;
       }
     }
     
-    // Get totals
-    const subtotalText = await p.locator('[data-testid="Subtotal"], span:has-text("Subtotal")').textContent().catch(() => "") || "";
-    const totalText = await p.locator('[data-testid="Total"], span:has-text("Total")').last().textContent().catch(() => "") || "";
+    // Get totals from visible text
+    const pageText = await p.textContent('body') || "";
+    const subtotalMatch = pageText.match(/Subtotal[:\s]*\$(\d+\.?\d*)/i);
+    const totalMatch = pageText.match(/Total[:\s]*\$(\d+\.?\d*)/i);
     
     await saveCookies(ctx);
     
     return {
       success: true,
       items,
-      subtotal: parseFloat(subtotalText.replace(/[^0-9.]/g, "")) || 0,
-      total: parseFloat(totalText.replace(/[^0-9.]/g, "")) || 0,
+      subtotal: subtotalMatch ? parseFloat(subtotalMatch[1]) : 0,
+      total: totalMatch ? parseFloat(totalMatch[1]) : 0,
     };
   } catch (error) {
     return {
@@ -475,37 +622,26 @@ export async function placeOrder(
 
   try {
     // Navigate to checkout
-    const checkoutButton = p.locator('button:has-text("Checkout"), a:has-text("Checkout"), [data-testid="CheckoutButton"]').first();
-    if (await checkoutButton.isVisible({ timeout: 3000 })) {
+    const checkoutButton = p.locator('button:has-text("Checkout"), a:has-text("Checkout")').first();
+    if (await checkoutButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await checkoutButton.click();
       await p.waitForTimeout(3000);
     }
     
     // Get order summary
     const items: CartItem[] = [];
-    const cartItems = p.locator('[data-testid="CartItem"], [data-testid="CheckoutItem"]');
-    const itemCount = await cartItems.count();
+    const pageText = await p.textContent('body') || "";
     
-    for (let i = 0; i < itemCount; i++) {
-      const item = cartItems.nth(i);
-      const name = await item.locator('span').first().textContent() || "";
-      const quantityText = await item.locator('span:has-text("x")').textContent().catch(() => "1") || "1";
-      const priceText = await item.locator('span:has-text("$")').first().textContent().catch(() => "$0") || "$0";
-      
-      if (name) {
-        items.push({
-          name: name.trim(),
-          quantity: parseInt(quantityText.replace(/[^0-9]/g, "")) || 1,
-          price: parseFloat(priceText.replace(/[^0-9.]/g, "")) || 0,
-        });
-      }
-    }
+    // Extract total from page
+    const totalMatch = pageText.match(/Total[:\s]*\$(\d+\.?\d*)/i);
+    const total = totalMatch ? parseFloat(totalMatch[1]) : 0;
     
-    const totalText = await p.locator('[data-testid="Total"], span:has-text("Total")').last().textContent().catch(() => "") || "";
-    const total = parseFloat(totalText.replace(/[^0-9.]/g, "")) || 0;
+    // Extract delivery info
+    const deliveryMatch = pageText.match(/Deliver to[:\s]*([^\n$]+)/i);
+    const deliveryAddress = deliveryMatch ? deliveryMatch[1].trim() : "";
     
-    const addressText = await p.locator('[data-testid="DeliveryAddress"], span:has-text("Deliver to")').textContent().catch(() => "") || "";
-    const deliveryTimeText = await p.locator('[data-testid="DeliveryTime"], span:has-text("min")').textContent().catch(() => "") || "";
+    const timeMatch = pageText.match(/(\d+[-–]\d+\s*min)/);
+    const estimatedDelivery = timeMatch ? timeMatch[1] : "";
     
     // If not confirmed, return summary for user to confirm
     if (!confirm) {
@@ -515,14 +651,14 @@ export async function placeOrder(
         summary: {
           items,
           total,
-          deliveryAddress: addressText.trim(),
-          estimatedDelivery: deliveryTimeText.trim(),
+          deliveryAddress,
+          estimatedDelivery,
         },
       };
     }
     
     // If confirmed, place the order
-    const placeOrderButton = p.locator('button:has-text("Place Order"), button[data-testid="PlaceOrderButton"]').first();
+    const placeOrderButton = p.locator('button:has-text("Place Order")').first();
     await placeOrderButton.waitFor({ timeout: 5000 });
     await placeOrderButton.click();
     await p.waitForTimeout(5000);
@@ -539,8 +675,8 @@ export async function placeOrder(
       summary: {
         items,
         total,
-        deliveryAddress: addressText.trim(),
-        estimatedDelivery: deliveryTimeText.trim(),
+        deliveryAddress,
+        estimatedDelivery,
       },
     };
   } catch (error) {
@@ -572,46 +708,34 @@ export async function trackOrder(
     
     // If on orders list, click the most recent/active order
     if (!orderId) {
-      const activeOrder = p.locator('[data-testid="ActiveOrder"], [data-testid="OrderCard"]').first();
-      if (await activeOrder.isVisible({ timeout: 3000 })) {
+      const activeOrder = p.locator('a[href*="/orders/"]').first();
+      if (await activeOrder.isVisible({ timeout: 3000 }).catch(() => false)) {
         await activeOrder.click();
         await p.waitForTimeout(2000);
       }
     }
     
-    // Get order details
-    const statusText = await p.locator('[data-testid="OrderStatus"], h1, h2').first().textContent() || "Unknown";
-    const restaurantName = await p.locator('[data-testid="RestaurantName"], span:has-text("from")').textContent().catch(() => "") || "";
-    const deliveryTimeText = await p.locator('[data-testid="EstimatedDelivery"], span:has-text("min")').textContent().catch(() => "") || "";
+    // Get order details from page
+    const pageText = await p.textContent('body') || "";
     
-    // Get dasher info if available
-    let dasher;
-    const dasherName = await p.locator('[data-testid="DasherName"]').textContent().catch(() => "");
-    if (dasherName) {
-      dasher = { name: dasherName.trim() };
-    }
+    // Extract status - look for common status phrases
+    let status = "Unknown";
+    if (pageText.includes("Preparing")) status = "Preparing";
+    else if (pageText.includes("On the way")) status = "On the way";
+    else if (pageText.includes("Delivered")) status = "Delivered";
+    else if (pageText.includes("Picking up")) status = "Picking up";
     
-    // Get order items
-    const items: CartItem[] = [];
-    const orderItems = p.locator('[data-testid="OrderItem"]');
-    const itemCount = await orderItems.count();
+    // Extract restaurant name
+    const restaurantMatch = pageText.match(/from\s+([^\n]+)/i);
+    const restaurantName = restaurantMatch ? restaurantMatch[1].trim() : "";
     
-    for (let i = 0; i < itemCount; i++) {
-      const item = orderItems.nth(i);
-      const name = await item.locator('span').first().textContent() || "";
-      const quantityText = await item.locator('span:has-text("x")').textContent().catch(() => "1") || "1";
-      const priceText = await item.locator('span:has-text("$")').first().textContent().catch(() => "$0") || "$0";
-      
-      if (name) {
-        items.push({
-          name: name.trim(),
-          quantity: parseInt(quantityText.replace(/[^0-9]/g, "")) || 1,
-          price: parseFloat(priceText.replace(/[^0-9.]/g, "")) || 0,
-        });
-      }
-    }
+    // Extract delivery time
+    const deliveryMatch = pageText.match(/(\d+[-–]\d+\s*min)/);
+    const estimatedDelivery = deliveryMatch ? deliveryMatch[1] : "";
     
-    const totalText = await p.locator('[data-testid="OrderTotal"], span:has-text("Total")').textContent().catch(() => "") || "";
+    // Extract total
+    const totalMatch = pageText.match(/Total[:\s]*\$(\d+\.?\d*)/i);
+    const total = totalMatch ? parseFloat(totalMatch[1]) : 0;
     
     await saveCookies(ctx);
     
@@ -619,12 +743,11 @@ export async function trackOrder(
       success: true,
       status: {
         orderId: orderId || p.url().match(/orders\/(\w+)/)?.[1] || "unknown",
-        status: statusText.trim(),
-        estimatedDelivery: deliveryTimeText.trim(),
-        restaurant: restaurantName.trim(),
-        dasher,
-        items,
-        total: parseFloat(totalText.replace(/[^0-9.]/g, "")) || 0,
+        status: status,
+        estimatedDelivery: estimatedDelivery,
+        restaurant: restaurantName,
+        items: [],
+        total: total,
       },
     };
   } catch (error) {
