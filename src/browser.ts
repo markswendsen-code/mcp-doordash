@@ -67,7 +67,7 @@ async function initBrowser(): Promise<void> {
   if (browser) return;
 
   browser = await chromium.launch({
-    headless: true,
+    headless: false,
     args: [
       "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
@@ -375,19 +375,24 @@ export async function getMenu(
     
     const categories: MenuCategory[] = [];
     
-    // Find menu sections - they usually have h2 or h3 headings
-    const sections = await p.locator('section, div:has(> h2), div:has(> h3)').all();
-    
+    // Find menu sections - they usually have h2 or h3 headings.
+    // Also include DoorDash grocery/convenience data-anchor-id based containers.
+    const sections = await p.locator(
+      'section, div:has(> h2), div:has(> h3), [data-anchor-id*="Category"], [data-anchor-id*="Section"], [data-testid*="category"], [data-testid*="section"]'
+    ).all();
+
     for (const section of sections) {
       try {
         // Get section heading
         const heading = await section.locator('h2, h3').first().textContent().catch(() => "");
         if (!heading || heading.length < 2) continue;
-        
+
         const items: MenuItem[] = [];
-        
-        // Find items within this section - look for clickable elements with prices
-        const itemElements = await section.locator('button, [role="button"], article, div:has(span:has-text("$"))').all();
+
+        // Find items within this section - covers restaurants and grocery/convenience layouts.
+        const itemElements = await section.locator(
+          'button, [role="button"], article, div:has(span:has-text("$")), [data-anchor-id*="MenuItem"], [data-testid*="MenuItem"], [data-testid*="item-card"], [data-testid*="StoreMenuItem"]'
+        ).all();
         
         for (const item of itemElements) {
           try {

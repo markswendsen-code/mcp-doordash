@@ -93,13 +93,22 @@ export function hasStoredCookies(): boolean {
 export async function getAuthState(context: BrowserContext): Promise<AuthState> {
   const cookies = await context.cookies("https://www.doordash.com");
   
-  // Check for session cookies that indicate logged in state
-  const hasSessionCookie = cookies.some(
-    (c) => c.name === "dd_session" || c.name === "ddsid" || c.name === "dd_login"
+  // Check for session cookies that indicate logged in state.
+  // Includes current cookie names as well as legacy names kept for backwards compatibility.
+  const SESSION_COOKIE_NAMES = new Set([
+    "consumer_session",   // current primary session cookie
+    "Cx-Auth-Token",      // current auth token cookie
+    "cx_auth_token",      // alternate casing
+    "dd_session",         // legacy
+    "ddsid",              // legacy
+    "dd_login",           // legacy
+  ]);
+  const hasSessionCookie = cookies.some((c) => SESSION_COOKIE_NAMES.has(c.name));
+
+  // Also check for user ID cookie (current and legacy names).
+  const userIdCookie = cookies.find(
+    (c) => c.name === "consumer_id" || c.name === "dd_user_id"
   );
-  
-  // Also check for user ID cookie
-  const userIdCookie = cookies.find((c) => c.name === "dd_user_id");
   
   if (hasSessionCookie || userIdCookie) {
     return {
