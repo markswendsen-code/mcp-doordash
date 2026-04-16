@@ -1,6 +1,6 @@
 {
   "name": "@striderlabs/mcp-doordash",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "MCP server for DoorDash - let AI agents order food delivery",
   "main": "dist/index.js",
   "bin": {
