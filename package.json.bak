@@ -1,7 +1,7 @@
 {
   "name": "@striderlabs/mcp-doordash",
-  "version": "0.4.3",
-  "description": "Autonomous food ordering via DoorDash. Let your AI agent search restaurants, build orders, and complete checkout. Supports persistent session management, real-time tracking, and full order lifecycle automation. Production-ready MCP server for personal agents.",
+  "version": "0.3.1",
+  "description": "MCP server for DoorDash - let AI agents order food delivery",
   "main": "dist/index.js",
   "bin": {
     "striderlabs-mcp-doordash": "dist/index.js"
@@ -13,25 +13,18 @@
   },
   "keywords": [
     "mcp",
-    "model-context-protocol",
-    "agent",
-    "autonomous-agent",
-    "personal-agent",
     "doordash",
     "food-delivery",
-    "order-automation",
-    "restaurant-ordering",
-    "delivery-agent",
+    "ai-agent",
+    "autonomous-agent",
+    "personal-agent",
     "agent-commerce",
-    "order-food-autonomously",
-    "mcp-food-ordering",
-    "autonomous-delivery",
-    "agent-action-execution",
-    "food-ordering-automation",
-    "ai-agent-integration",
+    "strider",
+    "model-context-protocol",
+    "agent",
     "automation",
-    "integration",
-    "doordash-automation"
+    "browser-automation",
+    "action-execution"
   ],
   "author": "Strider Labs <hello@striderlabs.ai>",
   "license": "MIT",

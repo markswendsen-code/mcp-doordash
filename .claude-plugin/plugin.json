@@ -1,0 +1,25 @@
+{
+  "name": "striderlabs-doordash",
+  "description": "Order food delivery with DoorDash. Let AI agents search restaurants, browse menus, and place orders.",
+  "version": "0.2.1",
+  "author": {
+    "name": "Strider Labs",
+    "email": "hello@striderlabs.ai",
+    "url": "https://striderlabs.ai"
+  },
+  "homepage": "https://striderlabs.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/markswendsen-code/mcp-doordash"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "doordash",
+    "food-delivery",
+    "ai-agent",
+    "automation",
+    "orders",
+    "restaurants"
+  ]
+}

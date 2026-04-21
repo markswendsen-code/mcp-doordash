@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.markswendsen-code/doordash",
-  "description": "DoorDash MCP server — search, order, and track food delivery. By Strider Labs.",
+  "description": "Autonomous food ordering via DoorDash. Let your AI agent search restaurants, build orders, and complete checkout. Supports persistent session management, real-time tracking, and full order lifecycle automation. Production-ready MCP server for personal agents.",
   "repository": {
     "url": "https://github.com/markswendsen-code/mcp-doordash",
     "source": "github"
   },
-  "version": "0.1.3",
+  "version": "0.4.3",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@striderlabs/mcp-doordash",
-      "version": "0.1.3",
+      "version": "0.4.3",
       "transport": {
         "type": "stdio"
       }
