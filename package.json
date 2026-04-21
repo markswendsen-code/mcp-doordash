@@ -1,6 +1,6 @@
 {
   "name": "@striderlabs/mcp-doordash",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Autonomous food ordering via DoorDash. Let your AI agent search restaurants, build orders, and complete checkout. Supports persistent session management, real-time tracking, and full order lifecycle automation. Production-ready MCP server for personal agents.",
   "main": "dist/index.js",
   "bin": {
