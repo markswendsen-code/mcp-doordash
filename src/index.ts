@@ -23,6 +23,7 @@ import {
   placeOrder,
   trackOrder,
   setAddress,
+  createGroupOrder,
   getLoginUrl,
   cleanup,
 } from "./browser.js";
@@ -161,6 +162,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["confirm"],
+        },
+      },
+      {
+        name: "doordash_create_group_order",
+        description:
+          "Create a group order for a restaurant and return the shareable link others can use to join and add their own items. Requires the delivery address to be set first.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            restaurantId: {
+              type: "string",
+              description: "The restaurant ID to start the group order from (from search results)",
+            },
+          },
+          required: ["restaurantId"],
         },
       },
       {
@@ -342,6 +358,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { confirm } = args as { confirm: boolean };
         const result = await placeOrder(confirm);
         
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result),
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case "doordash_create_group_order": {
+        const { restaurantId } = args as { restaurantId: string };
+        const result = await createGroupOrder(restaurantId);
+
         return {
           content: [
             {

@@ -764,6 +764,71 @@ export async function trackOrder(
 }
 
 /**
+ * Create a group order for a restaurant and return the shareable join link
+ */
+export async function createGroupOrder(
+  restaurantId: string
+): Promise<{ success: boolean; groupOrderUrl?: string; cartId?: string; error?: string }> {
+  const p = await getPage();
+  const ctx = await getContext();
+
+  try {
+    const currentUrl = p.url();
+    if (!currentUrl.includes(`/store/${restaurantId}`)) {
+      await p.goto(`${DOORDASH_BASE_URL}/store/${restaurantId}`, {
+        waitUntil: "domcontentloaded",
+        timeout: DEFAULT_TIMEOUT,
+      });
+      await p.waitForTimeout(3000);
+    }
+
+    // Open the "Start a group order" modal
+    const groupOrderButton = p.locator(
+      '[data-testid="CreateGroupCartModalButton"], button:has-text("Group Order")'
+    ).first();
+    await groupOrderButton.waitFor({ timeout: 10000 });
+    await groupOrderButton.click();
+    await p.waitForTimeout(1500);
+
+    // Confirm default options (no spend limit, no deadline) and start the group order
+    const startButton = p.locator(
+      '[data-testid="CreateGroupCartButton"], button:has-text("Start group order")'
+    ).first();
+    await startButton.waitFor({ timeout: 10000 });
+    await startButton.click();
+    await p.waitForTimeout(3000);
+
+    // The invite modal should auto-open on navigation to /cart/{cartId}?openGroupCartShare=true.
+    // If it doesn't, force it open via the query param.
+    let linkInput = p.locator('[data-testid="GroupCartLinkTextField"], input[value*="drd.sh"]').first();
+    if (!(await linkInput.isVisible({ timeout: 5000 }).catch(() => false))) {
+      const cartUrl = p.url().split("?")[0];
+      await p.goto(`${cartUrl}?openGroupCartShare=true`, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT });
+      await p.waitForTimeout(2000);
+      linkInput = p.locator('[data-testid="GroupCartLinkTextField"], input[value*="drd.sh"]').first();
+      await linkInput.waitFor({ timeout: 10000 });
+    }
+
+    const groupOrderUrl = await linkInput.inputValue();
+    const cartIdMatch = p.url().match(/\/cart\/([\w-]+)/);
+    const cartId = cartIdMatch?.[1];
+
+    await saveCookies(ctx);
+
+    return {
+      success: true,
+      groupOrderUrl,
+      cartId,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to create group order",
+    };
+  }
+}
+
+/**
  * Login prompt - returns URL and instructions for user to log in
  */
 export async function getLoginUrl(): Promise<{ url: string; instructions: string }> {
